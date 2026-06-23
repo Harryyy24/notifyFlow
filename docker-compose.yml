@@ -1,0 +1,177 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────
+#  NotifyFlow — Full Local Stack
+#  Services: MySQL 8, Redis 7, Zookeeper, Kafka, Spring Boot App
+# ─────────────────────────────────────────────────────────────
+
+services:
+
+  # ─────────────────────────────────────────────
+  #  MySQL 8
+  # ─────────────────────────────────────────────
+  mysql:
+    image: mysql:8.0
+    container_name: notifyflow-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE:      ${MYSQL_DATABASE}
+      MYSQL_USER:          ${MYSQL_USER}
+      MYSQL_PASSWORD:      ${MYSQL_PASSWORD}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost",
+             "-u", "${MYSQL_USER}", "-p${MYSQL_PASSWORD}"]
+      interval: 10s
+      timeout:  5s
+      retries:  10
+      start_period: 30s
+    networks:
+      - notifyflow-net
+
+  # ─────────────────────────────────────────────
+  #  Redis 7
+  # ─────────────────────────────────────────────
+  redis:
+    image: redis:7.2-alpine
+    container_name: notifyflow-redis
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD} --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout:  5s
+      retries:  5
+      start_period: 10s
+    networks:
+      - notifyflow-net
+
+  # ─────────────────────────────────────────────
+  #  Zookeeper
+  # ─────────────────────────────────────────────
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.1
+    container_name: notifyflow-zookeeper
+    restart: unless-stopped
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME:   2000
+    ports:
+      - "2181:2181"
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_logs:/var/lib/zookeeper/log
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo ruok | nc localhost 2181 | grep imok"]
+      interval: 10s
+      timeout:  5s
+      retries:  5
+      start_period: 15s
+    networks:
+      - notifyflow-net
+
+  # ─────────────────────────────────────────────
+  #  Apache Kafka
+  # ─────────────────────────────────────────────
+  kafka:
+    image: confluentinc/cp-kafka:7.6.1
+    container_name: notifyflow-kafka
+    restart: unless-stopped
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKER_ID:                        1
+      KAFKA_ZOOKEEPER_CONNECT:                zookeeper:2181
+      # Two listeners: internal (Docker network) + external (host machine)
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP:   INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS:             INTERNAL://kafka:29092,EXTERNAL://localhost:9092
+      KAFKA_LISTENERS:                        INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092
+      KAFKA_INTER_BROKER_LISTENER_NAME:       INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE:        "true"
+      KAFKA_LOG_RETENTION_HOURS:              168       # 7 days
+      KAFKA_LOG_SEGMENT_BYTES:                1073741824
+      KAFKA_NUM_PARTITIONS:                   3
+    ports:
+      - "9092:9092"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test:
+        - "CMD"
+        - "bash"
+        - "-c"
+        - "kafka-topics --bootstrap-server localhost:9092 --list"
+      interval: 15s
+      timeout:  10s
+      retries:  10
+      start_period: 30s
+    networks:
+      - notifyflow-net
+
+  # ─────────────────────────────────────────────
+  #  Spring Boot Application
+  # ─────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: notifyflow-app
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      # Datasource
+      SPRING_DATASOURCE_URL:      jdbc:mysql://mysql:3306/${MYSQL_DATABASE}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+      SPRING_DATASOURCE_USERNAME: ${MYSQL_USER}
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD}
+      # Redis
+      SPRING_DATA_REDIS_HOST:     redis
+      SPRING_DATA_REDIS_PORT:     6379
+      SPRING_DATA_REDIS_PASSWORD: ${REDIS_PASSWORD}
+      # Kafka — use internal listener when running inside Docker network
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      # JWT
+      APP_JWT_SECRET:     ${JWT_SECRET}
+      APP_JWT_EXPIRATION: ${JWT_EXPIRATION_MS}
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 20s
+      timeout:  10s
+      retries:  5
+      start_period: 60s
+    networks:
+      - notifyflow-net
+
+# ─────────────────────────────────────────────
+#  Named Volumes
+# ─────────────────────────────────────────────
+volumes:
+  mysql_data:
+  redis_data:
+  kafka_data:
+  zookeeper_data:
+  zookeeper_logs:
+
+# ─────────────────────────────────────────────
+#  Network
+# ─────────────────────────────────────────────
+networks:
+  notifyflow-net:
+    driver: bridge

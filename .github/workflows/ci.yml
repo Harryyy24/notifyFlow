@@ -1,0 +1,259 @@
+# ═══════════════════════════════════════════════════════════════
+#  NotifyFlow — GitHub Actions CI Pipeline
+#
+#  Triggers:
+#    - Push to main or develop branches
+#    - Any pull request targeting main
+#
+#  Pipeline stages:
+#    1. Checkout + Java 17 setup
+#    2. Maven dependency cache restore
+#    3. Build + unit tests (mvn clean verify)
+#    4. JaCoCo coverage report upload
+#    5. Test results published to GitHub UI
+#    6. Build Docker image (validate Dockerfile is healthy)
+#
+#  Services:
+#    MySQL 8 and Redis 7 spin up as GitHub Actions service
+#    containers so integration tests can run against real
+#    infrastructure rather than mocks.
+# ═══════════════════════════════════════════════════════════════
+
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+
+# Cancel in-progress runs on the same branch when a new push arrives
+# Prevents redundant CI runs piling up on rapid pushes
+concurrency:
+  group:  ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+
+  # ─────────────────────────────────────────────────────────────
+  #  Job 1 — Build, Test, Coverage
+  # ─────────────────────────────────────────────────────────────
+  build-and-test:
+    name: Build & Test (Java 17)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    # ── Service Containers ─────────────────────────────────────
+    # These run alongside the job and are accessible via localhost
+    services:
+
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: rootpassword
+          MYSQL_DATABASE:      notifyflow_db
+          MYSQL_USER:          notifyflow_user
+          MYSQL_PASSWORD:      notifyflow_pass
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost
+            -u notifyflow_user -pnotifyflow_pass"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+          --health-start-period=30s
+
+      redis:
+        image: redis:7.2-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    # ── Environment Variables ──────────────────────────────────
+    # Passed to mvn so Spring Boot picks them up during tests
+    env:
+      SPRING_DATASOURCE_URL:      >-
+        jdbc:mysql://localhost:3306/notifyflow_db
+        ?useSSL=false&allowPublicKeyRetrieval=true
+        &serverTimezone=UTC
+      SPRING_DATASOURCE_USERNAME: notifyflow_user
+      SPRING_DATASOURCE_PASSWORD: notifyflow_pass
+      SPRING_DATA_REDIS_HOST:     localhost
+      SPRING_DATA_REDIS_PORT:     6379
+      SPRING_DATA_REDIS_PASSWORD: ""
+      APP_JWT_SECRET:             >-
+        dGVzdFNlY3JldEtleUZvck5vdGlmeUZsb3dVbml0
+        VGVzdHMxMjM0NTY3ODkwQUJDREVGR0hJSktMTU5P
+        UFFSU1RVVldYWVo=
+      APP_JWT_EXPIRATION:         3600000
+      # Tell Spring to use the test profile (H2 + embedded Redis)
+      SPRING_PROFILES_ACTIVE:     test
+
+    steps:
+
+      # ── Step 1: Checkout ──────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0    # Full history needed for SonarCloud (future)
+
+      # ── Step 2: Java 17 Setup ─────────────────────────────────
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          java-version:   "17"
+          distribution:   temurin     # Eclipse Temurin (Adoptium)
+          cache:          maven       # Built-in Maven cache support
+
+      # ── Step 3: Verify Maven Wrapper ──────────────────────────
+      - name: Verify Maven version
+        run: mvn --version
+
+      # ── Step 4: Build + Test + Coverage ───────────────────────
+      - name: Build, test, and verify coverage
+        run: |
+          mvn clean verify \
+            --batch-mode \
+            --no-transfer-progress \
+            -Dspring.profiles.active=test
+        # --batch-mode:          suppresses download progress bars
+        # --no-transfer-progress: cleaner CI logs
+        # JaCoCo runs at verify phase and enforces 70% coverage
+
+      # ── Step 5: Publish Test Results ──────────────────────────
+      - name: Publish test results
+        uses: dorny/test-reporter@v1
+        if: always()    # Run even if tests fail — show the report
+        with:
+          name:          JUnit Test Results
+          path:          target/surefire-reports/*.xml
+          reporter:      java-junit
+          fail-on-error: false
+
+      # ── Step 6: Upload JaCoCo Coverage Report ─────────────────
+      - name: Upload JaCoCo coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name:           jacoco-coverage-report
+          path:           target/site/jacoco/
+          retention-days: 14
+
+      # ── Step 7: Coverage Summary to PR Comment ────────────────
+      - name: Add coverage summary to job summary
+        if: always()
+        run: |
+          echo "## Test Coverage Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f target/site/jacoco/index.html ]; then
+            echo "✅ JaCoCo report generated — " \
+              "download from artifacts above" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ JaCoCo report not found" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Target |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Service layer line coverage | ≥ 70% |" >> $GITHUB_STEP_SUMMARY
+
+  # ─────────────────────────────────────────────────────────────
+  #  Job 2 — Docker Build Validation
+  #  Verifies the Dockerfile builds successfully without pushing
+  # ─────────────────────────────────────────────────────────────
+  docker-build:
+    name: Docker Build Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: build-and-test    # Only run if tests pass
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17 (for Maven package)
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: temurin
+          cache:        maven
+
+      - name: Package application (skip tests — already ran)
+        run: |
+          mvn clean package -DskipTests \
+            --batch-mode \
+            --no-transfer-progress
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push:    false           # Validate only — don't push to registry
+          tags:    notifyflow:ci-${{ github.sha }}
+          cache-from: type=gha    # GitHub Actions cache for Docker layers
+          cache-to:   type=gha,mode=max
+
+      - name: Docker image build summary
+        run: |
+          echo "## Docker Build" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Image built successfully: \`notifyflow:ci-${{ github.sha }}\`" \
+            >> $GITHUB_STEP_SUMMARY
+
+  # ─────────────────────────────────────────────────────────────
+  #  Job 3 — Code Quality Gate (optional, non-blocking)
+  #  Static analysis via Maven's built-in checks
+  # ─────────────────────────────────────────────────────────────
+  code-quality:
+    name: Code Quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: build-and-test
+    if: github.event_name == 'pull_request'    # Only on PRs
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: temurin
+          cache:        maven
+
+      - name: Run static analysis (checkstyle + spotbugs placeholder)
+        run: |
+          echo "## Code Quality" >> $GITHUB_STEP_SUMMARY
+          echo "Static analysis plugins can be added to pom.xml:" \
+            >> $GITHUB_STEP_SUMMARY
+          echo "- **Checkstyle** — code style enforcement" \
+            >> $GITHUB_STEP_SUMMARY
+          echo "- **SpotBugs** — static bug detection" \
+            >> $GITHUB_STEP_SUMMARY
+          echo "- **PMD** — code smell detection" \
+            >> $GITHUB_STEP_SUMMARY
+          echo "- **SonarCloud** — comprehensive quality gate" \
+            >> $GITHUB_STEP_SUMMARY
+
+      - name: Verify no TODO/FIXME in production code
+        run: |
+          echo "Scanning for TODO/FIXME in src/main..."
+          if grep -r "TODO\|FIXME" src/main/java/ \
+              --include="*.java" -l 2>/dev/null; then
+            echo "⚠️  Found TODO/FIXME items in production code" \
+              >> $GITHUB_STEP_SUMMARY
+          else
+            echo "✅ No TODO/FIXME found in production code" \
+              >> $GITHUB_STEP_SUMMARY

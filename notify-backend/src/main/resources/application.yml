@@ -1,0 +1,246 @@
+# ═══════════════════════════════════════════════════════════════
+#  NotifyFlow — Main Application Configuration
+#  All sensitive values are injected via environment variables.
+#  Defaults shown here are for local Docker Compose development.
+# ═══════════════════════════════════════════════════════════════
+
+spring:
+  application:
+    name: notifyflow
+  main:
+    allow-circular-references: true
+
+  # ─────────────────────────────────────────────
+  #  DataSource — MySQL 8
+  # ─────────────────────────────────────────────
+  datasource:
+    url:      ${SPRING_DATASOURCE_URL:jdbc:mysql://localhost:3306/notifyflow_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC}
+    username: ${SPRING_DATASOURCE_USERNAME:notifyflow_user}
+    password: ${SPRING_DATASOURCE_PASSWORD:notifyflow_pass_change_me}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      pool-name:            NotifyFlowHikariPool
+      maximum-pool-size:    10
+      minimum-idle:         3
+      idle-timeout:         30000     # 30s
+      connection-timeout:   20000     # 20s
+      max-lifetime:         1800000   # 30 min — must be less than MySQL wait_timeout
+
+  # ─────────────────────────────────────────────
+  #  JPA / Hibernate
+  # ─────────────────────────────────────────────
+  jpa:
+    hibernate:
+      ddl-auto: validate          # Flyway owns the schema; Hibernate only validates
+    show-sql: false               # Set to true for local debugging only
+    open-in-view: false           # Disable OSIV — prevents lazy-load leaks in controllers
+    properties:
+      hibernate:
+        dialect:                    org.hibernate.dialect.MySQLDialect
+        format_sql:                 true
+        jdbc:
+          batch_size:               20
+          order_inserts:            true
+          order_updates:            true
+
+  # ─────────────────────────────────────────────
+  #  Flyway — Database Migrations
+  # ─────────────────────────────────────────────
+  flyway:
+    enabled:    true
+    locations:  classpath:db/migration
+    baseline-on-migrate: false
+    validate-on-migrate: true
+
+  # ─────────────────────────────────────────────
+  #  Redis — Lettuce client
+  # ─────────────────────────────────────────────
+  data:
+    redis:
+      host:     ${SPRING_DATA_REDIS_HOST:localhost}
+      port:     ${SPRING_DATA_REDIS_PORT:6379}
+      password: ${SPRING_DATA_REDIS_PASSWORD:redis_pass_change_me}
+      timeout:  2000ms
+      lettuce:
+        pool:
+          max-active:  8
+          max-idle:    4
+          min-idle:    1
+          max-wait:    1000ms
+
+  # ─────────────────────────────────────────────
+  #  Cache — Redis backend
+  # ─────────────────────────────────────────────
+  cache:
+    type: redis
+    redis:
+      time-to-live:       300000    # Default TTL: 5 minutes (ms)
+      cache-null-values:  false
+      use-key-prefix:     true
+      key-prefix:         "notifyflow:"
+
+  # ─────────────────────────────────────────────
+  #  Kafka
+  # ─────────────────────────────────────────────
+  kafka:
+    bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+
+    producer:
+      key-serializer:   org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      acks:             all           # Wait for all replicas to acknowledge
+      retries:          3
+      properties:
+        enable.idempotence:                 true
+        max.in.flight.requests.per.connection: 1
+        spring.json.add.type.headers:       false
+
+    consumer:
+      group-id:           notifyflow-consumer-group
+      auto-offset-reset:  earliest
+      enable-auto-commit: false        # Manual commit for at-least-once delivery
+      key-deserializer:   org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages:  "com.notifyflow.kafka.event"
+        spring.json.use.type.headers:  false
+        spring.json.value.default.type: com.notifyflow.kafka.event.NotificationEvent
+        isolation.level:               read_committed
+
+    listener:
+      ack-mode:         MANUAL_IMMEDIATE
+      concurrency:      3             # 3 threads per listener = 1 per partition
+      missing-topics-fatal: false
+
+  # ─────────────────────────────────────────────
+  #  Jackson
+  # ─────────────────────────────────────────────
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+      fail-on-empty-beans:       false
+    deserialization:
+      fail-on-unknown-properties: false
+    default-property-inclusion: NON_NULL
+    time-zone: UTC
+
+  # ─────────────────────────────────────────────
+  #  Mail / SMTP — Gmail SMTP with App Password
+  # ─────────────────────────────────────────────
+  mail:
+    host:     smtp.gmail.com
+    port:     587
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_APP_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth:       true
+          starttls:
+            enable:   true
+
+# ─────────────────────────────────────────────
+#  Server
+# ─────────────────────────────────────────────
+server:
+  port: 8080
+  servlet:
+    context-path: /
+  error:
+    include-message:    always
+    include-stacktrace: never    # Never expose stack traces to clients
+
+# ─────────────────────────────────────────────
+#  Actuator
+# ─────────────────────────────────────────────
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: when-authorized
+      probes:
+        enabled: true
+  info:
+    env:
+      enabled: true
+
+info:
+  app:
+    name:        NotifyFlow
+    description: Event-Driven Notification System
+    version:     1.0.0
+
+# ─────────────────────────────────────────────
+#  SpringDoc / Swagger UI
+# ─────────────────────────────────────────────
+springdoc:
+  api-docs:
+    path:    /api-docs
+    enabled: true
+  swagger-ui:
+    path:               /swagger-ui.html
+    operations-sorter:  method
+    tags-sorter:        alpha
+    display-request-duration: true
+    try-it-out-enabled: true
+  show-actuator: false
+  default-consumes-media-type: application/json
+  default-produces-media-type: application/json
+
+# ─────────────────────────────────────────────
+#  Application-specific properties
+# ─────────────────────────────────────────────
+app:
+  mail:
+    from: ${APP_MAIL_FROM:noreply@notifyflow.com}
+
+  jwt:
+    secret:     ${APP_JWT_SECRET:404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970}
+    expiration: ${APP_JWT_EXPIRATION:86400000}   # 24 hours in ms
+
+  kafka:
+    topics:
+      email:   notifyflow.email
+      sms:     notifyflow.sms
+      in-app:  notifyflow.inapp
+      # Dead Letter Topics
+      email-dlt:  notifyflow.email.dlt
+      sms-dlt:    notifyflow.sms.dlt
+      in-app-dlt: notifyflow.inapp.dlt
+    partitions:          3
+    replication-factor:  1
+
+  redis:
+    dedup-ttl-minutes:       10
+    preferences-ttl-minutes: 30
+    history-ttl-minutes:     5
+
+  notification:
+    retry-attempts:     3
+    retry-backoff-ms:   1000
+    failure-rate:       0.10    # 10% simulated failure rate in consumers
+
+# ─────────────────────────────────────────────
+#  Logging
+# ─────────────────────────────────────────────
+logging:
+  level:
+    root:                               INFO
+    com.notifyflow:                     INFO
+    # Suppress noisy Kafka internals
+    org.apache.kafka:                   WARN
+    org.springframework.kafka:          INFO
+    # Suppress Hibernate SQL noise
+    org.hibernate.SQL:                  WARN
+    org.hibernate.type.descriptor.sql:  WARN
+    # Flyway migration logs — keep visible
+    org.flywaydb:                       INFO
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+    file:    "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+  file:
+    name: logs/notifyflow.log

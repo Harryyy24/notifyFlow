@@ -1,0 +1,126 @@
+# ═══════════════════════════════════════════════════════════════
+#  NotifyFlow — Test Profile Configuration
+#  Uses H2 in-memory database and embedded Redis.
+#  Kafka is mocked at the unit test level via @MockBean.
+#  Activate with: @ActiveProfiles("test")
+# ═══════════════════════════════════════════════════════════════
+
+spring:
+
+  # ─────────────────────────────────────────────
+  #  DataSource — H2 in-memory (replaces MySQL)
+  # ─────────────────────────────────────────────
+  datasource:
+    url:                  jdbc:h2:mem:notifyflow_test;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=MySQL
+    username:             sa
+    password:
+    driver-class-name:    org.h2.Driver
+
+  # ─────────────────────────────────────────────
+  #  JPA — H2 dialect, create schema from Flyway
+  # ─────────────────────────────────────────────
+  jpa:
+    hibernate:
+      ddl-auto: none          # Still let Flyway run migrations
+    show-sql: true            # Helpful during test debugging
+    open-in-view: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.H2Dialect
+
+  # ─────────────────────────────────────────────
+  #  Flyway — run migrations against H2
+  # ─────────────────────────────────────────────
+  flyway:
+    enabled:             true
+    locations:           classpath:db/migration
+    baseline-on-migrate: true
+
+  # ─────────────────────────────────────────────
+  #  Redis — embedded (started by test config bean)
+  # ─────────────────────────────────────────────
+  data:
+    redis:
+      host:     localhost
+      port:     6370          # Offset port to avoid conflicts with local Redis
+      password:               # No password on embedded Redis
+
+  cache:
+    type: redis
+
+  # ─────────────────────────────────────────────
+  #  Mail / SMTP — fake config for tests
+  #  Unit tests mock the mail layer; this prevents
+  #  accidental connections to real SMTP.
+  # ─────────────────────────────────────────────
+  mail:
+    host:     localhost
+    port:     1025
+    username: test@notifyflow.com
+    password: fake-app-password
+    properties:
+      mail:
+        smtp:
+          auth:       false
+          starttls:
+            enable:   false
+
+  # ─────────────────────────────────────────────
+  #  Kafka — use embedded Kafka for integration tests
+  #  Unit tests mock KafkaTemplate directly.
+  # ─────────────────────────────────────────────
+  kafka:
+    bootstrap-servers: ${spring.embedded.kafka.brokers:localhost:9092}
+    producer:
+      key-serializer:   org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        spring.json.add.type.headers: false
+    consumer:
+      group-id:           notifyflow-test-group
+      auto-offset-reset:  earliest
+      enable-auto-commit: true
+      key-deserializer:   org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages:   "com.notifyflow.kafka.event"
+        spring.json.value.default.type: com.notifyflow.kafka.event.NotificationEvent
+
+# ─────────────────────────────────────────────
+#  Application properties — test overrides
+# ─────────────────────────────────────────────
+app:
+  jwt:
+    secret:     dGVzdFNlY3JldEtleUZvck5vdGlmeUZsb3dVbml0VGVzdHMxMjM0NTY3ODk=
+    expiration: 3600000       # 1 hour for tests
+
+  kafka:
+    topics:
+      email:      notifyflow.email
+      sms:        notifyflow.sms
+      in-app:     notifyflow.inapp
+      email-dlt:  notifyflow.email.dlt
+      sms-dlt:    notifyflow.sms.dlt
+      in-app-dlt: notifyflow.inapp.dlt
+    partitions:         1     # Single partition in tests
+    replication-factor: 1
+
+  redis:
+    dedup-ttl-minutes:       1
+    preferences-ttl-minutes: 1
+    history-ttl-minutes:     1
+
+  notification:
+    retry-attempts:  1
+    retry-backoff-ms: 100
+    failure-rate:    0.0      # No random failures in tests — deterministic only
+
+# ─────────────────────────────────────────────
+#  Logging — verbose for test output
+# ─────────────────────────────────────────────
+logging:
+  level:
+    root:               WARN
+    com.notifyflow:     DEBUG
+    org.flywaydb:       INFO
+    org.hibernate.SQL:  DEBUG

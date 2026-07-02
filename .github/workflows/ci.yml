@@ -115,10 +115,12 @@ jobs:
 
       # ── Step 3: Verify Maven Wrapper ──────────────────────────
       - name: Verify Maven version
+        working-directory: ./notify-backend
         run: mvn --version
 
       # ── Step 4: Build + Test + Coverage ───────────────────────
       - name: Build, test, and verify coverage
+        working-directory: ./notify-backend
         run: |
           mvn clean verify \
             --batch-mode \
@@ -134,7 +136,7 @@ jobs:
         if: always()    # Run even if tests fail — show the report
         with:
           name:          JUnit Test Results
-          path:          target/surefire-reports/*.xml
+          path:          notify-backend/target/surefire-reports/*.xml
           reporter:      java-junit
           fail-on-error: false
 
@@ -144,7 +146,7 @@ jobs:
         if: always()
         with:
           name:           jacoco-coverage-report
-          path:           target/site/jacoco/
+          path:           notify-backend/target/site/jacoco/
           retention-days: 14
 
       # ── Step 7: Coverage Summary to PR Comment ────────────────
@@ -153,7 +155,7 @@ jobs:
         run: |
           echo "## Test Coverage Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          if [ -f target/site/jacoco/index.html ]; then
+          if [ -f notify-backend/target/site/jacoco/index.html ]; then
             echo "✅ JaCoCo report generated — " \
               "download from artifacts above" >> $GITHUB_STEP_SUMMARY
           else
@@ -187,6 +189,7 @@ jobs:
           cache:        maven
 
       - name: Package application (skip tests — already ran)
+        working-directory: ./notify-backend
         run: |
           mvn clean package -DskipTests \
             --batch-mode \
@@ -198,7 +201,7 @@ jobs:
       - name: Build Docker image
         uses: docker/build-push-action@v5
         with:
-          context: .
+          context: ./notify-backend
           push:    false           # Validate only — don't push to registry
           tags:    notifyflow:ci-${{ github.sha }}
           cache-from: type=gha    # GitHub Actions cache for Docker layers
@@ -250,7 +253,7 @@ jobs:
       - name: Verify no TODO/FIXME in production code
         run: |
           echo "Scanning for TODO/FIXME in src/main..."
-          if grep -r "TODO\|FIXME" src/main/java/ \
+          if grep -r "TODO\|FIXME" notify-backend/src/main/java/ \
               --include="*.java" -l 2>/dev/null; then
             echo "⚠️  Found TODO/FIXME items in production code" \
               >> $GITHUB_STEP_SUMMARY

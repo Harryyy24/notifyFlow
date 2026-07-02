@@ -20,7 +20,7 @@ services:
       MYSQL_USER:          ${MYSQL_USER}
       MYSQL_PASSWORD:      ${MYSQL_PASSWORD}
     ports:
-      - "3306:3306"
+      - "3307:3306"
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
@@ -70,7 +70,7 @@ services:
       - zookeeper_data:/var/lib/zookeeper/data
       - zookeeper_logs:/var/lib/zookeeper/log
     healthcheck:
-      test: ["CMD", "bash", "-c", "echo ruok | nc localhost 2181 | grep imok"]
+      test: ["CMD", "bash", "-c", "echo srvr | nc localhost 2181 | grep -q 'Zookeeper version'"]
       interval: 10s
       timeout:  5s
       retries:  5
@@ -119,11 +119,24 @@ services:
       - notifyflow-net
 
   # ─────────────────────────────────────────────
+  #  MailHog — Local SMTP server for email testing
+  # ─────────────────────────────────────────────
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: notifyflow-mailhog
+    restart: unless-stopped
+    ports:
+      - "1025:1025"   # SMTP server
+      - "8025:8025"   # Web UI
+    networks:
+      - notifyflow-net
+
+  # ─────────────────────────────────────────────
   #  Spring Boot Application
   # ─────────────────────────────────────────────
   app:
     build:
-      context: .
+      context: ./notify-backend
       dockerfile: Dockerfile
     container_name: notifyflow-app
     restart: unless-stopped
@@ -145,6 +158,10 @@ services:
       SPRING_DATA_REDIS_PASSWORD: ${REDIS_PASSWORD}
       # Kafka — use internal listener when running inside Docker network
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      # Mail / SMTP — real Gmail SMTP
+      MAIL_USERNAME:     ${MAIL_USERNAME}
+      MAIL_APP_PASSWORD: ${MAIL_APP_PASSWORD}
+      APP_MAIL_FROM:     ${MAIL_USERNAME}
       # JWT
       APP_JWT_SECRET:     ${JWT_SECRET}
       APP_JWT_EXPIRATION: ${JWT_EXPIRATION_MS}

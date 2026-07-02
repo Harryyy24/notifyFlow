@@ -1,8 +1,9 @@
 version: "3.9"
 
 # ─────────────────────────────────────────────────────────────
-#  NotifyFlow — Full Local Stack
-#  Services: MySQL 8, Redis 7, Zookeeper, Kafka, Spring Boot App
+#  NotifyFlow — Full Stack
+#  Services: MySQL 8, Redis 7, Zookeeper, Kafka, Spring Boot App, Frontend (Nginx)
+#  Access the UI at http://localhost
 # ─────────────────────────────────────────────────────────────
 
 services:
@@ -132,6 +133,28 @@ services:
       - notifyflow-net
 
   # ─────────────────────────────────────────────
+  #  Frontend — Nginx serving React SPA
+  # ─────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: notifyflow-frontend
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "80:80"
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 20s
+      timeout:  5s
+      retries:  5
+    networks:
+      - notifyflow-net
+
+  # ─────────────────────────────────────────────
   #  Spring Boot Application
   # ─────────────────────────────────────────────
   app:
@@ -148,6 +171,8 @@ services:
       kafka:
         condition: service_healthy
     environment:
+      # Profile — set to "prod" for production tuning
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-}
       # Datasource
       SPRING_DATASOURCE_URL:      jdbc:mysql://mysql:3306/${MYSQL_DATABASE}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
       SPRING_DATASOURCE_USERNAME: ${MYSQL_USER}
@@ -165,6 +190,8 @@ services:
       # JWT
       APP_JWT_SECRET:     ${JWT_SECRET}
       APP_JWT_EXPIRATION: ${JWT_EXPIRATION_MS}
+      # CORS — comma-separated origins allowed by the backend
+      APP_CORS_ORIGINS: ${APP_CORS_ORIGINS:-http://localhost:5173,http://localhost:3000,http://localhost}
     ports:
       - "8080:8080"
     healthcheck:

@@ -14,8 +14,8 @@ import com.notifyflow.model.enums.NotificationPriority;
 import com.notifyflow.model.enums.NotificationStatus;
 import com.notifyflow.repository.NotificationRepository;
 import com.notifyflow.repository.UserRepository;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.Page;
@@ -48,14 +48,26 @@ import com.notifyflow.model.enums.NotificationChannel;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class NotificationService {
 
     private final NotificationRepository notificationRepository;
     private final UserRepository         userRepository;
-    private final DeduplicationService   deduplicationService;
     private final PreferenceService      preferenceService;
-    private final NotificationProducer   notificationProducer;
+
+    @Autowired(required = false)
+    private DeduplicationService deduplicationService;
+
+    @Autowired(required = false)
+    private NotificationProducer notificationProducer;
+
+    public NotificationService(
+            NotificationRepository notificationRepository,
+            UserRepository userRepository,
+            PreferenceService preferenceService) {
+        this.notificationRepository = notificationRepository;
+        this.userRepository = userRepository;
+        this.preferenceService = preferenceService;
+    }
 
     // ── Send Pipeline ──────────────────────────────────────────────
 
@@ -102,12 +114,13 @@ public class NotificationService {
                             "suppressed until the quiet window ends.");
         }
 
-        // Step 4 — Deduplication check
-        if (deduplicationService.isDuplicate(
-                request.getUserId(),
-                request.getChannel(),
-                request.getTitle(),
-                request.getMessage())) {
+        // Step 4 — Deduplication check (skipped if Redis is disabled)
+        if (deduplicationService != null
+                && deduplicationService.isDuplicate(
+                        request.getUserId(),
+                        request.getChannel(),
+                        request.getTitle(),
+                        request.getMessage())) {
 
             long ttlSeconds = deduplicationService.getRemainingTtlSeconds(
                     request.getUserId(),
@@ -137,8 +150,13 @@ public class NotificationService {
         NotificationEntity saved = notificationRepository.save(entity);
         log.debug("Notification persisted — id=[{}]", saved.getId());
 
-        // Step 6 — Publish to Kafka (fire-and-forget from this thread)
-        notificationProducer.publishNotification(saved);
+        // Step 6 — Publish to Kafka (skipped if Kafka is disabled)
+        if (notificationProducer != null) {
+            notificationProducer.publishNotification(saved);
+        } else {
+            log.warn("Kafka disabled — notification id=[{}] will remain PENDING. " +
+                    "Manually mark as DELIVERED via admin panel.", saved.getId());
+        }
 
         log.info("Notification accepted — id=[{}] userId=[{}] channel=[{}]",
                 saved.getId(), request.getUserId(), request.getChannel());

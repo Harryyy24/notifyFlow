@@ -1,0 +1,91 @@
+spring:
+  datasource:
+    url: ${DATABASE_URL}
+    username: ${DATABASE_USERNAME}
+    password: ${DATABASE_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      pool-name: NotifyFlowHikariPool
+      maximum-pool-size: 5
+      minimum-idle: 1
+      connection-timeout: 20000
+      max-lifetime: 1800000
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+  flyway:
+    enabled: false
+
+  cache:
+    type: simple
+
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+      - org.springframework.boot.autoconfigure.kafka.KafkaAutoConfiguration
+
+  mail:
+    host: ${MAIL_HOST:smtp.gmail.com}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_APP_PASSWORD:}
+
+server:
+  port: ${PORT:8080}
+  error:
+    include-message: always
+    include-stacktrace: never
+
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+
+app:
+  cors:
+    allowed-origins: ${APP_CORS_ORIGINS:https://notifyflow-frontend.onrender.com}
+
+  mail:
+    from: ${APP_MAIL_FROM:noreply@notifyflow.com}
+
+  jwt:
+    secret: ${APP_JWT_SECRET}
+    expiration: ${APP_JWT_EXPIRATION:86400000}
+
+  redis:
+    enabled: false
+    dedup-ttl-minutes: 10
+    preferences-ttl-minutes: 30
+    history-ttl-minutes: 5
+
+  kafka:
+    enabled: false
+    topics:
+      email: notifyflow.email
+      sms: notifyflow.sms
+      in-app: notifyflow.inapp
+      email-dlt: notifyflow.email.dlt
+      sms-dlt: notifyflow.sms.dlt
+      in-app-dlt: notifyflow.inapp.dlt
+    partitions: 1
+    replication-factor: 1
+
+  notification:
+    retry-attempts: 3
+    retry-backoff-ms: 1000
+    failure-rate: 0.10
+
+logging:
+  level:
+    root: INFO
+    com.notifyflow: INFO
+    org.hibernate.SQL: WARN
+    org.flywaydb: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"

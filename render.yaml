@@ -1,0 +1,47 @@
+services:
+  - type: web
+    name: notifyflow-backend
+    env: docker
+    dockerfilePath: notify-backend/Dockerfile.render
+    envVars:
+      - key: SPRING_PROFILES_ACTIVE
+        value: render
+      - key: PORT
+        value: "8080"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: notifyflow-db
+          property: connectionString
+      - key: DATABASE_USERNAME
+        fromDatabase:
+          name: notifyflow-db
+          property: user
+      - key: DATABASE_PASSWORD
+        fromDatabase:
+          name: notifyflow-db
+          property: password
+      - key: APP_JWT_SECRET
+        generateValue: true
+        length: 64
+      - key: APP_JWT_EXPIRATION
+        value: "86400000"
+      - key: APP_CORS_ORIGINS
+        value: https://notifyflow-frontend.onrender.com
+      - key: MAIL_USERNAME
+        value: ""
+      - key: MAIL_APP_PASSWORD
+        value: ""
+
+  - type: web
+    name: notifyflow-frontend
+    env: static
+    buildCommand: cd frontend && npm ci && npm run build
+    staticPublishPath: frontend/dist
+    envVars:
+      - key: VITE_API_BASE_URL
+        value: https://notifyflow-backend.onrender.com
+
+databases:
+  - name: notifyflow-db
+    databaseName: notifyflow
+    plan: free

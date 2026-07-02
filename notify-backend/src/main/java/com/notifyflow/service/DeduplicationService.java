@@ -4,7 +4,9 @@ import com.notifyflow.model.enums.NotificationChannel;
 import com.notifyflow.util.RedisKeyUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
@@ -25,6 +27,7 @@ import java.time.Duration;
  */
 @Slf4j
 @Service
+@ConditionalOnProperty(name = "app.redis.enabled", havingValue = "true", matchIfMissing = true)
 @RequiredArgsConstructor
 public class DeduplicationService {
 

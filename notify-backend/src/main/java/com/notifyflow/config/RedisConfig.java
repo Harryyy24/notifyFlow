@@ -32,6 +32,7 @@ import java.util.Map;
  */
 @Configuration
 @EnableCaching
+@ConditionalOnProperty(name = "app.redis.enabled", havingValue = "true", matchIfMissing = true)
 public class RedisConfig {
 
     @Value("${spring.data.redis.host}")

@@ -195,6 +195,9 @@ springdoc:
 #  Application-specific properties
 # ─────────────────────────────────────────────
 app:
+  cors:
+    allowed-origins: ${APP_CORS_ORIGINS:http://localhost:5173,http://localhost:3000,http://localhost}
+
   mail:
     from: ${APP_MAIL_FROM:noreply@notifyflow.com}
 

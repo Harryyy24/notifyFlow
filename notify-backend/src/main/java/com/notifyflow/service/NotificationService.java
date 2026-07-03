@@ -53,20 +53,29 @@ public class NotificationService {
     private final NotificationRepository notificationRepository;
     private final UserRepository         userRepository;
     private final PreferenceService      preferenceService;
-
-    @Autowired(required = false)
-    private DeduplicationService deduplicationService;
-
-    @Autowired(required = false)
-    private NotificationProducer notificationProducer;
+    private DeduplicationService   deduplicationService;
+    private NotificationProducer   notificationProducer;
+    private final EmailSenderService emailSenderService;
 
     public NotificationService(
             NotificationRepository notificationRepository,
             UserRepository userRepository,
-            PreferenceService preferenceService) {
+            PreferenceService preferenceService,
+            EmailSenderService emailSenderService) {
         this.notificationRepository = notificationRepository;
         this.userRepository = userRepository;
         this.preferenceService = preferenceService;
+        this.emailSenderService = emailSenderService;
+    }
+
+    @Autowired(required = false)
+    public void setDeduplicationService(DeduplicationService deduplicationService) {
+        this.deduplicationService = deduplicationService;
+    }
+
+    @Autowired(required = false)
+    public void setNotificationProducer(NotificationProducer notificationProducer) {
+        this.notificationProducer = notificationProducer;
     }
 
     // ── Send Pipeline ──────────────────────────────────────────────
@@ -154,8 +163,19 @@ public class NotificationService {
         if (notificationProducer != null) {
             notificationProducer.publishNotification(saved);
         } else {
-            log.warn("Kafka disabled — notification id=[{}] will remain PENDING. " +
-                    "Manually mark as DELIVERED via admin panel.", saved.getId());
+            try {
+                if (request.getChannel() == NotificationChannel.EMAIL) {
+                    emailSenderService.sendEmail(
+                            user.getEmail(), saved.getTitle(), saved.getMessage());
+                }
+                saved.markDelivered(null);
+                notificationRepository.save(saved);
+                log.info("Notification delivered synchronously — id=[{}]", saved.getId());
+            } catch (Exception e) {
+                saved.markFailed();
+                notificationRepository.save(saved);
+                log.error("Synchronous delivery failed — id=[{}]", saved.getId(), e);
+            }
         }
 
         log.info("Notification accepted — id=[{}] userId=[{}] channel=[{}]",

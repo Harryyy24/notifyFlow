@@ -50,8 +50,8 @@ class NotificationServiceTest {
     @Mock private DeduplicationService   deduplicationService;
     @Mock private PreferenceService      preferenceService;
     @Mock private NotificationProducer   notificationProducer;
+    @Mock private EmailSenderService      emailSenderService;
 
-    @InjectMocks
     private NotificationService notificationService;
 
     private UserEntity testUser;
@@ -60,6 +60,11 @@ class NotificationServiceTest {
 
     @BeforeEach
     void setUp() {
+        notificationService = new NotificationService(
+                notificationRepository, userRepository, preferenceService, emailSenderService);
+        notificationService.setDeduplicationService(deduplicationService);
+        notificationService.setNotificationProducer(notificationProducer);
+
         testUser = UserEntity.builder()
                 .id(1L)
                 .name("Jane Doe")
@@ -131,6 +136,31 @@ class NotificationServiceTest {
         notificationService.sendNotification(validRequest);
 
         verify(notificationProducer).publishNotification(testEntity);
+    }
+
+    @Test
+    @DisplayName("sendNotification — falls back to synchronous email delivery when Kafka is disabled")
+    void sendNotification_fallsBackToSynchronousDelivery_whenKafkaDisabled() {
+        notificationService.setNotificationProducer(null);
+
+        when(userRepository.findById(1L))
+                .thenReturn(Optional.of(testUser));
+        when(preferenceService.isChannelEnabled(1L, NotificationChannel.EMAIL))
+                .thenReturn(true);
+        when(deduplicationService.isDuplicate(anyLong(), any(), anyString(), anyString()))
+                .thenReturn(false);
+        when(notificationRepository.save(any()))
+                .thenReturn(testEntity);
+
+        notificationService.sendNotification(validRequest);
+
+        verify(emailSenderService).sendEmail(
+                "jane@example.com", "Test Title", "Test Message");
+        ArgumentCaptor<NotificationEntity> captor =
+                ArgumentCaptor.forClass(NotificationEntity.class);
+        verify(notificationRepository, times(2)).save(captor.capture());
+        assertThat(captor.getAllValues().get(1).getStatus())
+                .isEqualTo(NotificationStatus.DELIVERED);
     }
 
     // ── sendNotification — User Not Found ──────────────────────────
